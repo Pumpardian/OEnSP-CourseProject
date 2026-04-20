@@ -3,8 +3,8 @@
 #include <algorithm>
 #include "node.h"
 
-constexpr int MAX_THREADS = 100;
-constexpr int RETIRE_THRESHOLD = 50;
+constexpr int MAX_THREADS = 200;
+constexpr int RETIRE_THRESHOLD = 100;
 
 template <typename T>
 class HazardPointerManager {

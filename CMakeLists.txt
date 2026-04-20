@@ -10,6 +10,8 @@ set(SOURCES
     queue/node.h
     queue/hazardPointerManager.h
     queue/queue.h
+    queue.h
+    stand.h
     )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
