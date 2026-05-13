@@ -39,14 +39,16 @@ void run_functional_test(int num_producers, int num_consumers, int ops_per_threa
     auto producer = [&](int id) {
         start_latch.wait(); 
         for (int i = 0; i < ops_per_thread; ++i) q.enqueue({id, i});
-        active_producers--;
+        --active_producers;
     };
 
     auto consumer = [&](int c_id) {
         start_latch.wait();
         TestMessage msg;
-        while (active_producers > 0 || q.dequeue(msg)) {
-            if (q.dequeue(msg)) consumer_results[c_id].push_back(msg);
+        while (active_producers > 0) {
+            while (q.dequeue(msg)) {
+                consumer_results[c_id].push_back(msg);
+            }
         }
     };
 
@@ -80,62 +82,48 @@ void run_functional_test(int num_producers, int num_consumers, int ops_per_threa
 }
 
 template <typename QueueType>
-void run_load_test(const std::string& name, int num_producers, int num_consumers, int ops_per_thread) {
+void run_load_test(const std::string& name, int num_threads, int ops_per_thread, int push_percent) {
     QueueType q;
-    Latch start_latch(num_producers + num_consumers + 1);
-    std::atomic<int> active_producers{num_producers};
-    
-    std::vector<ThreadMetrics> prod_metrics(num_producers);
-    std::vector<ThreadMetrics> cons_metrics(num_consumers);
+    Latch start_latch(num_threads + 1);
+    std::vector<ThreadMetrics> metrics(num_threads);
 
-    auto producer = [&](int id) {
+    auto worker = [&](int id) {
         start_latch.wait();
         for (int i = 0; i < ops_per_thread; ++i) {
+            bool is_push = (i % 100) < push_percent; 
             auto start = high_resolution_clock::now();
-            q.enqueue(i);
+            
+            if (is_push) {
+                q.enqueue(i);
+            } else {
+                int dummy;
+                q.dequeue(dummy);
+            }
+            
             auto end = high_resolution_clock::now();
             long long lat = duration_cast<nanoseconds>(end - start).count();
-            prod_metrics[id].total_latency_ns += lat;
-            prod_metrics[id].max_latency_ns = std::max(prod_metrics[id].max_latency_ns, lat);
-            prod_metrics[id].operations++;
-        }
-        active_producers--;
-    };
-
-    auto consumer = [&](int id) {
-        start_latch.wait();
-        int dummy;
-        while (active_producers > 0 || q.dequeue(dummy)) {
-            auto start = high_resolution_clock::now();
-            if (q.dequeue(dummy)) {
-                auto end = high_resolution_clock::now();
-                long long lat = duration_cast<nanoseconds>(end - start).count();
-                cons_metrics[id].total_latency_ns += lat;
-                cons_metrics[id].max_latency_ns = std::max(cons_metrics[id].max_latency_ns, lat);
-                cons_metrics[id].operations++;
-            }
+            metrics[id].total_latency_ns += lat;
+            metrics[id].max_latency_ns = std::max(metrics[id].max_latency_ns, lat);
+            ++metrics[id].operations;
         }
     };
 
     std::vector<std::thread> threads;
-    for (int i = 0; i < num_producers; ++i) threads.emplace_back(producer, i);
-    for (int i = 0; i < num_consumers; ++i) threads.emplace_back(consumer, i);
-
+    for (int i = 0; i < num_threads; ++i) threads.emplace_back(worker, i);
+    
     auto test_start = high_resolution_clock::now();
     start_latch.wait();
     for (auto& t : threads) t.join();
     auto test_end = high_resolution_clock::now();
 
     double total_time_s = duration<double>(test_end - test_start).count();
-    long long total_ops = num_producers * ops_per_thread;
-    
+    long long total_ops = num_threads * ops_per_thread;
     long long total_latency = 0;
     long long max_latency = 0;
-    for (const auto& m : prod_metrics) { total_latency += m.total_latency_ns; max_latency = std::max(max_latency, m.max_latency_ns); }
-    for (const auto& m : cons_metrics) { total_latency += m.total_latency_ns; max_latency = std::max(max_latency, m.max_latency_ns); }
+    for (const auto& m : metrics) { total_latency += m.total_latency_ns; max_latency = std::max(max_latency, m.max_latency_ns); }
 
-    std::cout << "--- Results: " << name << " (" << num_producers << " Producers, " << num_consumers << " Consumers) ---\n";
-    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "--- Results: " << name << " (" << num_threads << " Threads) ---\n";
+    std::cout << std::fixed << std::setprecision(9);
     std::cout << "Total time:           " << total_time_s << " sec\n";
     std::cout << "Bandwidth: " << (total_ops / total_time_s) << " ops/sec\n";
     std::cout << "Avg latency:      " << (total_latency / (total_ops * 2.0)) << " ns/op\n"; 

@@ -11,8 +11,10 @@ class HazardPointerManager {
     std::atomic<void*> hazard_pointers[MAX_THREADS][2];
     
     struct ThreadState {
-        int id;
+        int id = -1;
         std::vector<Node<T>*> retire_list;
+
+        ~ThreadState() { for (auto ptr : retire_list) delete ptr; } 
     };
 
     static thread_local ThreadState local_state;
